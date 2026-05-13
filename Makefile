@@ -11,9 +11,9 @@ endif
 POSTGRES_DB ?= multica
 POSTGRES_USER ?= multica
 POSTGRES_PASSWORD ?= multica
-POSTGRES_PORT ?= 5432
-PORT ?= 8080
-FRONTEND_PORT ?= 3000
+POSTGRES_PORT ?= 55432
+PORT ?= 58080
+FRONTEND_PORT ?= 53000
 FRONTEND_ORIGIN ?= http://localhost:$(FRONTEND_PORT)
 MULTICA_APP_URL ?= $(FRONTEND_ORIGIN)
 DATABASE_URL ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=disable
@@ -149,6 +149,8 @@ selfhost-stop: ## Stop the self-hosted Docker Compose stack
 	docker compose -f docker-compose.selfhost.yml down
 	@echo "✓ All services stopped."
 
+selfhost-logs: ## Tail logs for the self-hosted Docker Compose stack
+	docker compose -f docker-compose.selfhost.yml logs -f
 # ---------- One-click commands ----------
 ##@ One-click
 
