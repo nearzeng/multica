@@ -20,8 +20,6 @@ interface StdioServerConfig {
 // HTTP/SSE transport server config
 interface HttpServerConfig {
   url: string;
-  timeout?: number;
-  headers?: Record<string, string>;
 }
 
 type McpServerConfig = StdioServerConfig | HttpServerConfig;
@@ -42,8 +40,6 @@ interface ServerEntry {
   envVars: { key: string; value: string }[];
   // http fields
   url: string;
-  timeout: string;
-  headers: { key: string; value: string }[];
 }
 
 function isStdioConfig(config: McpServerConfig): config is StdioServerConfig {
@@ -73,11 +69,6 @@ function configToEntries(config: McpConfig): ServerEntry[] {
         args: "",
         envVars: [],
         url: server.url,
-        timeout: server.timeout?.toString() ?? "30000",
-        headers: Object.entries(server.headers ?? {}).map(([key, value]) => ({
-          key,
-          value,
-        })),
       };
     }
     return {
@@ -91,8 +82,6 @@ function configToEntries(config: McpConfig): ServerEntry[] {
         value,
       })),
       url: "",
-      timeout: "30000",
-      headers: [],
     };
   });
 }
@@ -102,16 +91,8 @@ function entriesToConfig(entries: ServerEntry[]): McpConfig {
   for (const entry of entries) {
     if (!entry.name.trim()) continue;
     if (entry.transportType === "http") {
-      const headers: Record<string, string> = {};
-      for (const { key, value } of entry.headers) {
-        if (key.trim()) {
-          headers[key.trim()] = value;
-        }
-      }
       servers[entry.name.trim()] = {
         url: entry.url,
-        timeout: entry.timeout ? parseInt(entry.timeout, 10) : 30000,
-        ...(Object.keys(headers).length > 0 && { headers }),
       };
     } else {
       const args = entry.args
@@ -172,8 +153,6 @@ export function McpTab({
         args: "",
         envVars: [],
         url: "",
-        timeout: "30000",
-        headers: [],
       },
     ]);
   };
@@ -195,8 +174,6 @@ export function McpTab({
             updated.envVars = [];
           } else {
             updated.url = "";
-            updated.timeout = "30000";
-            updated.headers = [];
           }
         }
         return updated;
@@ -237,44 +214,6 @@ export function McpTab({
               ...e,
               envVars: e.envVars.map((ev, i) =>
                 i === index ? { ...ev, [field]: value } : ev,
-              ),
-            }
-          : e,
-      ),
-    );
-  };
-
-  const addHeader = (id: string) => {
-    setEntries(
-      entries.map((e) =>
-        e.id === id ? { ...e, headers: [...e.headers, { key: "", value: "" }] } : e,
-      ),
-    );
-  };
-
-  const removeHeader = (entryId: string, index: number) => {
-    setEntries(
-      entries.map((e) =>
-        e.id === entryId
-          ? { ...e, headers: e.headers.filter((_, i) => i !== index) }
-          : e,
-      ),
-    );
-  };
-
-  const updateHeader = (
-    entryId: string,
-    index: number,
-    field: "key" | "value",
-    value: string,
-  ) => {
-    setEntries(
-      entries.map((e) =>
-        e.id === entryId
-          ? {
-              ...e,
-              headers: e.headers.map((h, i) =>
-                i === index ? { ...h, [field]: value } : h,
               ),
             }
           : e,
@@ -499,69 +438,8 @@ export function McpTab({
                     />
                   </div>
 
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">
-                      {t(($) => $.tab_body.mcp.timeout_label)}
-                    </Label>
-                    <Input
-                      value={entry.timeout}
-                      onChange={(e) => updateEntry(entry.id, "timeout", e.target.value)}
-                      placeholder={t(($) => $.tab_body.mcp.timeout_placeholder)}
-                      className="font-mono text-xs"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <Label className="text-xs">
-                        {t(($) => $.tab_body.mcp.headers_label)}
-                      </Label>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => addHeader(entry.id)}
-                        className="h-6 text-xs"
-                      >
-                        <Plus className="h-3 w-3" />
-                        {t(($) => $.tab_body.mcp.add_header)}
-                      </Button>
-                    </div>
-                    {entry.headers.length > 0 && (
-                      <div className="space-y-1.5">
-                        {entry.headers.map((header, index) => (
-                          <div key={index} className="flex items-center gap-2">
-                            <Input
-                              value={header.key}
-                              onChange={(e) =>
-                                updateHeader(entry.id, index, "key", e.target.value)
-                              }
-                              placeholder={t(($) => $.tab_body.mcp.header_key_placeholder)}
-                              className="flex-1 font-mono text-xs"
-                            />
-                            <span className="text-xs text-muted-foreground">:</span>
-                            <Input
-                              value={header.value}
-                              onChange={(e) =>
-                                updateHeader(entry.id, index, "value", e.target.value)
-                              }
-                              placeholder={t(($) => $.tab_body.mcp.header_value_placeholder)}
-                              className="flex-1 font-mono text-xs"
-                            />
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              onClick={() => removeHeader(entry.id, index)}
-                              className="text-muted-foreground hover:text-destructive"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </>
+                  
+                                  </>
               )}
             </div>
           ))}
