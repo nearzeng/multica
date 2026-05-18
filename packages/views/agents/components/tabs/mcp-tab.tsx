@@ -12,6 +12,7 @@ import { useT } from "../../../i18n";
 
 // Stdio transport server config
 interface StdioServerConfig {
+  type: string;
   command: string;
   args?: string[];
   env?: Record<string, string>;
@@ -19,6 +20,7 @@ interface StdioServerConfig {
 
 // HTTP/SSE transport server config
 interface HttpServerConfig {
+  type: string;
   url: string;
 }
 
@@ -92,6 +94,7 @@ function entriesToConfig(entries: ServerEntry[]): McpConfig {
     if (!entry.name.trim()) continue;
     if (entry.transportType === "http") {
       servers[entry.name.trim()] = {
+        type: "http",
         url: entry.url,
       };
     } else {
@@ -106,6 +109,7 @@ function entriesToConfig(entries: ServerEntry[]): McpConfig {
         }
       }
       servers[entry.name.trim()] = {
+        type: "stdio",
         command: entry.command,
         ...(args.length > 0 && { args }),
         ...(Object.keys(env).length > 0 && { env }),
