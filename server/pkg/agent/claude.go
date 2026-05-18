@@ -51,6 +51,7 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		mcpConfigPath = path
 		mcpFileCleanup = func() { os.Remove(mcpConfigPath) }
 		args = append(args, "--mcp-config", mcpConfigPath)
+		b.cfg.Logger.Info("MCP config written", "path", mcpConfigPath, "content", string(opts.McpConfig))
 	}
 	// Clean up the temp file if we return before the goroutine takes ownership.
 	defer func() {
