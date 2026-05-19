@@ -133,8 +133,14 @@ function entriesToConfig(entries: ServerEntry[]): McpConfig {
   return { mcpServers: Object.keys(servers).length > 0 ? servers : undefined };
 }
 
+function sortObjectKeys<T extends object>(obj: T): T {
+  return JSON.parse(JSON.stringify(obj), (_key, value) =>
+    Array.isArray(value) ? value : value && typeof value === "object" ? Object.keys(value).sort().reduce((acc, k) => ({ ...acc, [k]: (value as Record<string, unknown>)[k] }), {}) : value
+  ) as T;
+}
+
 function configEquals(a: McpConfig, b: McpConfig): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+  return JSON.stringify(sortObjectKeys(a)) === JSON.stringify(sortObjectKeys(b));
 }
 
 export function McpTab({
@@ -159,6 +165,10 @@ export function McpTab({
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
+
+  useEffect(() => {
+    setEntries(configToEntries(parseMcpConfig(agent.mcp_config)));
+  }, [agent.mcp_config]);
 
   const addEntry = () => {
     setEntries([
