@@ -9,8 +9,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { ReactRenderer } from "@tiptap/react";
-import { computePosition, offset, flip, shift } from "@floating-ui/dom";
 import type { QueryClient } from "@tanstack/react-query";
 import { getCurrentWsId } from "@multica/core/platform";
 import { flattenIssueBuckets, issueKeys } from "@multica/core/issues/queries";
@@ -24,18 +22,22 @@ import type {
   ListIssuesCache,
   MemberWithUser,
   Agent,
+  Squad,
 } from "@multica/core/types";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { StatusIcon } from "../../issues/components/status-icon";
 import { useT } from "../../i18n";
 import { Badge } from "@multica/ui/components/ui/badge";
 import type { IssueStatus } from "@multica/core/types";
-import type { SuggestionOptions, SuggestionProps } from "@tiptap/suggestion";
+import type { SuggestionOptions } from "@tiptap/suggestion";
+import { PluginKey } from "@tiptap/pm/state";
 import {
   getRecencyMap,
   recordMentionUsage,
   sortUserItemsByRecency,
 } from "./mention-recency";
+import { matchesPinyin } from "./pinyin-match";
+import { createSuggestionPopupRender } from "./suggestion-popup";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -44,7 +46,7 @@ import {
 export interface MentionItem {
   id: string;
   label: string;
-  type: "member" | "agent" | "issue" | "all";
+  type: "member" | "agent" | "squad" | "issue" | "all";
   /** Secondary text shown beside the label (e.g. issue title) */
   description?: string;
   /** Issue status for StatusIcon rendering */
@@ -301,6 +303,7 @@ function MentionRow({
     const isClosed = item.status === "done" || item.status === "cancelled";
     return (
       <button
+        type="button"
         ref={buttonRef}
         className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs transition-colors ${
           selected ? "bg-accent" : "hover:bg-accent/50"
@@ -324,6 +327,7 @@ function MentionRow({
 
   return (
     <button
+      type="button"
       ref={buttonRef}
       className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs transition-colors ${
         selected ? "bg-accent" : "hover:bg-accent/50"
@@ -343,6 +347,11 @@ function MentionRow({
         // "Agent" is a glossary-protected product term — kept un-translated.
         // eslint-disable-next-line i18next/no-literal-string
         <Badge variant="outline" className="ml-auto text-[10px] h-4 px-1.5">Agent</Badge>
+      )}
+      {item.type === "squad" && (
+        // "Squad" is a glossary-protected product term — kept un-translated.
+        // eslint-disable-next-line i18next/no-literal-string
+        <Badge variant="outline" className="ml-auto text-[10px] h-4 px-1.5">Squad</Badge>
       )}
     </button>
   );
@@ -366,10 +375,9 @@ export function createMentionSuggestion(qc: QueryClient): Omit<
   SuggestionOptions<MentionItem>,
   "editor"
 > {
-  // Renderer/popup instances live in this closure so each ContentEditor owns
-  // its own TipTap suggestion popup lifecycle.
-  let renderer: ReactRenderer<MentionListRef> | null = null;
-  let popup: HTMLDivElement | null = null;
+  // The explicit key is passed into Tiptap Suggestion and reused by the
+  // shared popup controller when it dispatches exitSuggestion(view, pluginKey).
+  const pluginKey = new PluginKey("mentionSuggestion");
 
   function buildSyncItems(query: string): MentionItem[] {
     // Read workspace id imperatively because this runs in TipTap factory scope
@@ -380,7 +388,9 @@ export function createMentionSuggestion(qc: QueryClient): Omit<
 
     const members: MemberWithUser[] = qc.getQueryData(workspaceKeys.members(wsId)) ?? [];
     const agents: Agent[] = qc.getQueryData(workspaceKeys.agents(wsId)) ?? [];
-    const cachedResponse = qc.getQueryData<ListIssuesCache>(issueKeys.list(wsId));
+    const squads: Squad[] = qc.getQueryData(workspaceKeys.squads(wsId)) ?? [];
+    const listQueries = qc.getQueriesData<ListIssuesCache>({ queryKey: issueKeys.list(wsId) });
+    const cachedResponse = listQueries[0]?.[1];
     const cachedIssues: Issue[] = cachedResponse ? flattenIssueBuckets(cachedResponse) : [];
 
     // Read current user identity imperatively — this factory runs outside
@@ -400,7 +410,7 @@ export function createMentionSuggestion(qc: QueryClient): Omit<
         : [];
 
     const memberItems: MentionItem[] = members
-      .filter((m) => m.name.toLowerCase().includes(q))
+      .filter((m) => m.name.toLowerCase().includes(q) || matchesPinyin(m.name, q))
       .map((m) => ({
         id: m.user_id,
         label: m.name,
@@ -411,17 +421,21 @@ export function createMentionSuggestion(qc: QueryClient): Omit<
       .filter(
         (a) =>
           !a.archived_at &&
-          a.name.toLowerCase().includes(q) &&
+          (a.name.toLowerCase().includes(q) || matchesPinyin(a.name, q)) &&
           canAssignAgentToIssue(a, { userId, role: myRole }).allowed,
       )
       .map((a) => ({ id: a.id, label: a.name, type: "agent" as const }));
+
+    const squadItems: MentionItem[] = squads
+      .filter((s) => !s.archived_at && (s.name.toLowerCase().includes(q) || matchesPinyin(s.name, q)))
+      .map((s) => ({ id: s.id, label: s.name, type: "squad" as const }));
 
     // Members and agents share a single ranked list — recently mentioned
     // targets come first regardless of type, with an alphabetical fallback
     // for everyone the user hasn't mentioned yet on this device.
     const recency = getRecencyMap(wsId);
     const userItems = sortUserItemsByRecency(
-      [...memberItems, ...agentItems],
+      [...memberItems, ...agentItems, ...squadItems],
       recency,
     );
 
@@ -439,78 +453,21 @@ export function createMentionSuggestion(qc: QueryClient): Omit<
   }
 
   return {
+    pluginKey,
     items: ({ query }) => {
       const syncItems = buildSyncItems(query);
       return syncItems;
     },
 
-    render: () => {
-      return {
-        onStart: (props: SuggestionProps<MentionItem>) => {
-          renderer = new ReactRenderer(MentionList, {
-            props: {
-              items: props.items,
-              query: props.query,
-              command: props.command,
-            },
-            editor: props.editor,
-          });
-
-          popup = document.createElement("div");
-          popup.style.position = "fixed";
-          popup.style.zIndex = "50";
-          popup.appendChild(renderer.element);
-          document.body.appendChild(popup);
-
-          updatePosition(popup, props.clientRect);
-        },
-
-        onUpdate: (props: SuggestionProps<MentionItem>) => {
-          renderer?.updateProps({
-            items: props.items,
-            query: props.query,
-            command: props.command,
-          });
-          if (popup) updatePosition(popup, props.clientRect);
-        },
-
-        onKeyDown: (props: { event: KeyboardEvent }) => {
-          if (props.event.key === "Escape") {
-            cleanup();
-            return true;
-          }
-          return renderer?.ref?.onKeyDown(props) ?? false;
-        },
-
-        onExit: () => {
-          cleanup();
-        },
-      };
-
-      function updatePosition(
-        el: HTMLDivElement,
-        clientRect: (() => DOMRect | null) | null | undefined,
-      ) {
-        if (!clientRect) return;
-        const virtualEl = {
-          getBoundingClientRect: () => clientRect() ?? new DOMRect(),
-        };
-        computePosition(virtualEl, el, {
-          placement: "bottom-start",
-          strategy: "fixed",
-          middleware: [offset(4), flip(), shift({ padding: 8 })],
-        }).then(({ x, y }) => {
-          el.style.left = `${x}px`;
-          el.style.top = `${y}px`;
-        });
-      }
-
-      function cleanup() {
-        renderer?.destroy();
-        renderer = null;
-        popup?.remove();
-        popup = null;
-      }
-    },
+    render: createSuggestionPopupRender<MentionItem, MentionItem, MentionListRef, MentionListProps>({
+      pluginKey,
+      component: MentionList,
+      getProps: (props) => ({
+        items: props.items,
+        query: props.query,
+        command: props.command,
+      }),
+      onKeyDown: (ref, props) => ref?.onKeyDown(props) ?? false,
+    }),
   };
 }
