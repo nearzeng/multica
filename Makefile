@@ -160,6 +160,8 @@ selfhost-stop: ## Stop the self-hosted Docker Compose stack
 	docker compose -f docker-compose.selfhost.yml down
 	@echo "✓ All services stopped."
 
+selfhost-logs: ## Tail logs for the self-hosted Docker Compose stack
+	docker compose -f docker-compose.selfhost.yml logs -f
 # ---------- One-click commands ----------
 ##@ One-click
 
