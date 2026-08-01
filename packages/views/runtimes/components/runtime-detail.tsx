@@ -22,6 +22,7 @@ import { memberListOptions, agentListOptions } from "@multica/core/workspace/que
 import { useUpdateRuntime } from "@multica/core/runtimes/mutations";
 import {
   deriveRuntimeHealth,
+  runtimeDisplayName,
   runtimeProfileListOptions,
 } from "@multica/core/runtimes";
 import {
@@ -39,14 +40,12 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
 import { AppLink, useNavigation } from "../../navigation";
 import { availabilityConfig, workloadConfig } from "../../agents/presence";
-import { formatLastSeen } from "../utils";
 import { HealthBadge } from "./shared";
 import { ProviderLogo } from "./provider-logo";
-import { UpdateSection } from "./update-section";
 import { UsageSection } from "./usage-section";
 import { DeleteRuntimeDialog } from "./delete-runtime-dialog";
 import { DeleteRuntimeProfileDialog } from "./delete-runtime-profile-dialog";
-import { useT } from "../../i18n";
+import { useT, useTimeAgo } from "../../i18n";
 
 function getCliVersion(metadata: Record<string, unknown>): string | null {
   if (
@@ -55,17 +54,6 @@ function getCliVersion(metadata: Record<string, unknown>): string | null {
     metadata.cli_version
   ) {
     return metadata.cli_version;
-  }
-  return null;
-}
-
-function getLaunchedBy(metadata: Record<string, unknown>): string | null {
-  if (
-    metadata &&
-    typeof metadata.launched_by === "string" &&
-    metadata.launched_by
-  ) {
-    return metadata.launched_by;
   }
   return null;
 }
@@ -90,13 +78,21 @@ function useNowTick(intervalMs = 30_000): number {
   return now;
 }
 
-export function RuntimeDetail({ runtime }: { runtime: AgentRuntime }) {
+export function RuntimeDetail({
+  runtime,
+  machineHref,
+  machineLabel,
+  afterDeleteHref,
+}: {
+  runtime: AgentRuntime;
+  machineHref?: string;
+  machineLabel?: string;
+  afterDeleteHref?: string;
+}) {
   const { t } = useT("runtimes");
+  const timeAgo = useTimeAgo();
   const cliVersion =
     runtime.runtime_mode === "local" ? getCliVersion(runtime.metadata) : null;
-  const launchedBy =
-    runtime.runtime_mode === "local" ? getLaunchedBy(runtime.metadata) : null;
-
   const user = useAuthStore((s) => s.user);
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
@@ -134,35 +130,41 @@ export function RuntimeDetail({ runtime }: { runtime: AgentRuntime }) {
     (a) => a.runtime_id === runtime.id && !a.archived_at,
   );
 
-  // Successful delete (light or cascade) closes the dialog and navigates
-  // back to the runtimes list. Toast lives here so the cascade-mode count
-  // and the light-mode "Runtime deleted" share one entry point.
+  const deleteDestination = afterDeleteHref ?? paths.runtimes();
+
   const handleRuntimeDeleted = () => {
     setDeleteOpen(false);
-    navigation.replace(paths.runtimes());
+    navigation.replace(deleteDestination);
     toast.success(t(($) => $.detail.toast_deleted));
   };
 
   const handleProfileDeleted = () => {
     setDeleteOpen(false);
-    navigation.replace(paths.runtimes());
+    navigation.replace(deleteDestination);
   };
 
   const daemonShort = shortDaemonId(runtime.daemon_id);
-  const lastSeen = formatLastSeen(runtime.last_seen_at);
+  const lastSeen = runtime.last_seen_at
+    ? timeAgo(runtime.last_seen_at)
+    : t(($) => $.detail.never_seen);
 
   return (
     <div className="flex h-full flex-col">
       <BreadcrumbHeader
-        segments={[{ href: paths.runtimes(), label: t(($) => $.page.title) }]}
+        segments={[
+          { href: paths.runtimes(), label: t(($) => $.page.title) },
+          ...(machineHref && machineLabel
+            ? [{ href: machineHref, label: machineLabel }]
+            : []),
+        ]}
         leaf={
-          <span className="truncate font-mono text-xs text-foreground">
-            {runtime.name}
+          <span className="truncate font-mono text-caption text-foreground">
+            {runtimeDisplayName(runtime)}
           </span>
         }
         actions={
           !canEditRuntime ? (
-            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+            <span className="inline-flex items-center gap-1 text-caption text-muted-foreground">
               <Lock className="h-3 w-3" />
               {t(($) => $.detail.read_only)}
             </span>
@@ -198,8 +200,6 @@ export function RuntimeDetail({ runtime }: { runtime: AgentRuntime }) {
             />
             <DiagnosticsCard
               runtime={runtime}
-              cliVersion={cliVersion}
-              launchedBy={launchedBy}
               canEdit={!!canEditRuntime}
               canDelete={!!canDelete}
               onDelete={() => setDeleteOpen(true)}
@@ -272,11 +272,11 @@ function HeroCard({
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <h2 className="truncate text-base font-semibold tracking-tight">
-              {runtime.name}
+            <h2 className="truncate text-title-sm font-semibold tracking-tight">
+              {runtimeDisplayName(runtime)}
             </h2>
             <HealthBadge health={health} />
-            <span className="text-xs text-muted-foreground">
+            <span className="text-caption text-muted-foreground">
               {t(($) => $.detail.last_seen, { when: lastSeen })}
             </span>
           </div>
@@ -287,27 +287,27 @@ function HeroCard({
           Replaces the older dense `·`-separated meta strip that mixed
           everything (including dev-only IDs) at the same visual weight. */}
       <dl className="grid grid-cols-1 divide-y sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-        <Fact label="Owner">
+        <Fact label={t(($) => $.detail.fact_owner)}>
           {ownerMember ? (
             <span className="inline-flex min-w-0 items-center gap-1.5">
               <ActorAvatar
                 actorType="member"
                 actorId={ownerMember.user_id}
-                size={18}
+                size="sm"
                 enableHoverCard
               />
-              <span className="cursor-pointer truncate text-sm">{ownerMember.name}</span>
+              <span className="cursor-pointer truncate text-body">{ownerMember.name}</span>
             </span>
           ) : (
-            <span className="text-sm text-muted-foreground">—</span>
+            <span className="text-body text-muted-foreground">—</span>
           )}
         </Fact>
-        <Fact label="Device">
+        <Fact label={t(($) => $.detail.fact_device)}>
           {device?.hostname ? (
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <span className="block truncate font-mono text-xs">
+                  <span className="block truncate font-mono text-caption">
                     {device.hostname}
                   </span>
                 }
@@ -315,11 +315,11 @@ function HeroCard({
               <TooltipContent>{device.hostname}</TooltipContent>
             </Tooltip>
           ) : (
-            <span className="text-sm text-muted-foreground">—</span>
+            <span className="text-body text-muted-foreground">—</span>
           )}
         </Fact>
-        <Fact label="Runtime">
-          <span className="block truncate text-sm">
+        <Fact label={t(($) => $.detail.fact_runtime)}>
+          <span className="block truncate text-body">
             {device?.runtime ?? (
               <span className="capitalize">{runtime.provider}</span>
             )}
@@ -335,7 +335,7 @@ function HeroCard({
           <button
             type="button"
             onClick={() => setShowDetails((v) => !v)}
-            className="flex w-full items-center gap-1 px-4 py-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+            className="flex w-full items-center gap-1 px-4 py-2 text-caption text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           >
             <ChevronRight
               className={`h-3 w-3 transition-transform ${
@@ -347,12 +347,12 @@ function HeroCard({
           {showDetails && (
             <dl className="grid grid-cols-1 gap-y-2 border-t bg-muted/30 px-4 py-3 sm:grid-cols-2">
               {cliVersion && (
-                <Fact label="Daemon CLI" mono compact>
+                <Fact label={t(($) => $.detail.fact_daemon_cli)} mono compact>
                   {cliVersion}
                 </Fact>
               )}
               {daemonShort && (
-                <Fact label="Daemon ID" mono compact>
+                <Fact label={t(($) => $.detail.fact_daemon_id)} mono compact>
                   {daemonShort}
                 </Fact>
               )}
@@ -377,10 +377,10 @@ function Fact({
 }) {
   return (
     <div className={`min-w-0 ${compact ? "" : "px-4 py-3"}`}>
-      <dt className="text-[11px] uppercase tracking-wider text-muted-foreground">
+      <dt className="text-micro uppercase tracking-wider text-muted-foreground">
         {label}
       </dt>
-      <dd className={`mt-1 ${mono ? "font-mono text-xs" : ""}`}>{children}</dd>
+      <dd className={`mt-1 ${mono ? "font-mono text-caption" : ""}`}>{children}</dd>
     </div>
   );
 }
@@ -399,15 +399,15 @@ function ServingAgentsCard({
   return (
     <div className="rounded-lg border">
       <div className="flex items-center justify-between border-b px-4 py-2.5">
-        <span className="text-xs font-semibold">{t(($) => $.detail.serving_title)}</span>
-        <span className="text-xs text-muted-foreground">
+        <span className="text-caption font-semibold">{t(($) => $.detail.serving_title)}</span>
+        <span className="text-caption text-muted-foreground">
           {t(($) => $.detail.serving_count, { count: agents.length })}
         </span>
       </div>
       {agents.length === 0 ? (
         <div className="flex flex-col items-center px-4 py-6 text-center">
-          <Cpu className="h-5 w-5 text-muted-foreground/40" />
-          <p className="mt-2 text-xs text-muted-foreground">
+          <Cpu className="h-5 w-5 text-faint-foreground" />
+          <p className="mt-2 text-caption text-muted-foreground">
             {t(($) => $.detail.no_agents)}
           </p>
         </div>
@@ -428,12 +428,12 @@ function ServingAgentsCard({
                 href={agentHref(agent.id)}
                 className="group flex items-center gap-2 px-4 py-2 transition-colors hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:outline-none"
               >
-                <ActorAvatar actorType="agent" actorId={agent.id} size={20} enableHoverCard showStatusDot />
+                <ActorAvatar actorType="agent" actorId={agent.id} size="sm" enableHoverCard showStatusDot />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-xs font-medium">
+                  <div className="truncate text-caption font-medium">
                     {agent.name}
                   </div>
-                  <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs">
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-caption">
                     <span className="inline-flex items-center gap-1.5">
                       <span className={`h-1.5 w-1.5 rounded-full ${av.dotClass}`} />
                       <span className={av.textClass}>{avLabel}</span>
@@ -455,7 +455,7 @@ function ServingAgentsCard({
                     )}
                   </div>
                 </div>
-                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40 transition-colors group-hover:text-muted-foreground" />
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-faint-foreground transition-colors group-hover:text-muted-foreground" />
               </AppLink>
             );
           })}
@@ -467,29 +467,24 @@ function ServingAgentsCard({
 
 function DiagnosticsCard({
   runtime,
-  cliVersion,
-  launchedBy,
   canEdit,
   canDelete,
   onDelete,
 }: {
   runtime: AgentRuntime;
-  cliVersion: string | null;
-  launchedBy: string | null;
   canEdit: boolean;
   canDelete: boolean;
   onDelete: () => void;
 }) {
   const { t } = useT("runtimes");
-  const isLocal = runtime.runtime_mode === "local";
   return (
     <div className="rounded-lg border">
       <div className="border-b px-4 py-2.5">
-        <span className="text-xs font-semibold">{t(($) => $.detail.diagnostics_title)}</span>
+        <span className="text-caption font-semibold">{t(($) => $.detail.diagnostics_title)}</span>
       </div>
       <div className="space-y-3 p-4">
         <div>
-          <div className="mb-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+          <div className="mb-1.5 text-micro uppercase tracking-wide text-muted-foreground">
             {t(($) => $.detail.diagnostics_visibility)}
           </div>
           {canEdit ? (
@@ -498,19 +493,6 @@ function DiagnosticsCard({
             <VisibilityReadout runtime={runtime} />
           )}
         </div>
-        {isLocal && (
-          <div className="border-t pt-3">
-            <div className="mb-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
-              {t(($) => $.detail.diagnostics_cli)}
-            </div>
-            <UpdateSection
-              runtimeId={runtime.id}
-              currentVersion={cliVersion}
-              isOnline={runtime.status === "online"}
-              launchedBy={launchedBy}
-            />
-          </div>
-        )}
         {canDelete && (
           // The button stays clickable even when the runtime is a live
           // local daemon (self-healing). The owner explicitly asked for
@@ -548,7 +530,7 @@ function VisibilityReadout({ runtime }: { runtime: AgentRuntime }) {
     <Tooltip>
       <TooltipTrigger
         render={
-          <span className="inline-flex items-center gap-1.5 rounded-md border bg-muted/30 px-2 py-1.5 text-xs">
+          <span className="inline-flex items-center gap-1.5 rounded-md border bg-muted/30 px-2 py-1.5 text-caption">
             <Icon className="h-3 w-3 text-muted-foreground" />
             <span className="font-medium">
               {t(($) => $.detail.visibility_label[visibility])}
@@ -640,7 +622,7 @@ function VisibilityChoice({
             type="button"
             onClick={onClick}
             disabled={disabled}
-            className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium transition-colors ${
+            className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-caption font-medium transition-colors ${
               active
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground"

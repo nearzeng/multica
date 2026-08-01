@@ -42,7 +42,12 @@ import {
   sortUserItemsByRecency,
 } from "./mention-recency";
 import { matchesPinyin } from "./pinyin-match";
-import { createSuggestionPopupRender, isPickerAcceptKey } from "./suggestion-popup";
+import {
+  createSuggestionPopupRender,
+  isPickerAcceptKey,
+  pickerNavigationDirection,
+} from "./suggestion-popup";
+import { isTriggerArmedAt } from "./suggestion-trigger-arming";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -276,15 +281,13 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         // IME is composing — don't intercept Enter/Arrow as picker actions;
         // those keys belong to the IME (Enter commits composition, etc).
         if (isImeComposing(event)) return false;
-        if (event.key === "ArrowUp") {
+        // Arrow keys plus the Ctrl+N/J/P/K aliases the command bar accepts —
+        // see pickerNavigationDirection.
+        const direction = pickerNavigationDirection(event);
+        if (direction !== null) {
           if (orderedItems.length === 0) return true;
-          const next = (selectedIndex + orderedItems.length - 1) % orderedItems.length;
-          setSelectedKey(mentionItemKey(orderedItems[next]!));
-          return true;
-        }
-        if (event.key === "ArrowDown") {
-          if (orderedItems.length === 0) return true;
-          const next = (selectedIndex + 1) % orderedItems.length;
+          const delta = direction === "next" ? 1 : orderedItems.length - 1;
+          const next = (selectedIndex + delta) % orderedItems.length;
           setSelectedKey(mentionItemKey(orderedItems[next]!));
           return true;
         }
@@ -305,7 +308,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         (isSearching || searchedQuery !== normalizedQuery);
 
       return (
-        <div className="rounded-md border bg-popover p-2 text-xs text-muted-foreground shadow-md">
+        <div className="rounded-md border bg-popover p-2 text-caption text-muted-foreground shadow-md">
           {isWaitingForServer
             ? t(($) => $.mention.searching)
             : t(($) => $.mention.no_results)}
@@ -352,14 +355,20 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
       <div
         className={cn(
           "flex flex-col overflow-y-auto overscroll-contain border bg-popover py-1",
+          // Height budget: clamp to whichever is smaller — the design max or the
+          // viewport-aware `--suggestion-available-height` published by the
+          // floating-ui `size` middleware (suggestion-popup.tsx). The var falls
+          // back to the design max when the popup renders outside that
+          // controller. This is the single height authority; do not add a second
+          // fixed max-height above it or the list can overflow the viewport.
           contextLayout
-            ? "max-h-[420px] w-96 rounded-lg shadow-xl"
-            : "max-h-[300px] w-72 rounded-md shadow-md",
+            ? "max-h-[min(420px,var(--suggestion-available-height,420px))] w-96 rounded-lg shadow-xl"
+            : "max-h-[min(300px,var(--suggestion-available-height,300px))] w-72 rounded-md shadow-md",
         )}
       >
         {groups.map((group) => (
           <div key={group.label}>
-            <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+            <div className="px-3 py-2 text-micro font-semibold uppercase tracking-wide text-muted-foreground">
               {groupLabel(group.label)}
             </div>
             {renderRows(group)}
@@ -394,7 +403,7 @@ function MentionRow({
       <button
         type="button"
         ref={buttonRef}
-        className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors ${
+        className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-caption transition-colors ${
           selected ? "bg-accent" : "hover:bg-accent/50"
         } ${isClosed ? "opacity-60" : ""}`}
         onClick={onSelect}
@@ -428,7 +437,7 @@ function MentionRow({
       <button
         type="button"
         ref={buttonRef}
-        className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors ${
+        className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-caption transition-colors ${
           selected ? "bg-accent" : "hover:bg-accent/50"
         }`}
         onClick={onSelect}
@@ -455,7 +464,7 @@ function MentionRow({
     <button
       type="button"
       ref={buttonRef}
-      className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs transition-colors ${
+      className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-caption transition-colors ${
         selected ? "bg-accent" : "hover:bg-accent/50"
       }`}
       onClick={onSelect}
@@ -463,7 +472,7 @@ function MentionRow({
       <ActorAvatar
         actorType={item.type === "all" ? "member" : item.type}
         actorId={item.id}
-        size={20}
+        size="sm"
         showStatusDot
       />
       <span className="truncate font-medium">
@@ -472,12 +481,12 @@ function MentionRow({
       {item.type === "agent" && (
         // "Agent" is a glossary-protected product term — kept un-translated.
         // eslint-disable-next-line i18next/no-literal-string
-        <Badge variant="outline" className="ml-auto text-[10px] h-4 px-1.5">Agent</Badge>
+        <Badge variant="outline" className="ml-auto text-micro h-4 px-1.5">Agent</Badge>
       )}
       {item.type === "squad" && (
         // "Squad" is a glossary-protected product term — kept un-translated.
         // eslint-disable-next-line i18next/no-literal-string
-        <Badge variant="outline" className="ml-auto text-[10px] h-4 px-1.5">Squad</Badge>
+        <Badge variant="outline" className="ml-auto text-micro h-4 px-1.5">Squad</Badge>
       )}
     </button>
   );
@@ -610,6 +619,11 @@ export function createMentionSuggestion(
 
   return {
     pluginKey,
+    allowSpaces: true,
+    // Only open over an `@` the user actually typed. Tiptap matches on document
+    // content alone, so without this a pasted, dropped, undone or server-loaded
+    // `@` opens the picker just as readily (MUL-5429).
+    shouldShow: ({ editor, range }) => isTriggerArmedAt(editor, range.from),
     items: ({ query }) => {
       if (options.mode === "context") {
         const normalizedQuery = query.trim();
